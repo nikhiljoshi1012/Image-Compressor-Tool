@@ -1,0 +1,157 @@
+% Initialize variables
+inputImages = {};
+grayscaleImages = {};
+compressedImages = {};
+compressionQualities = [];
+outputFormats = {};
+outputFileNames = {};
+
+% Prompt to select multiple images
+[fileNames, filePath] = uigetfile({'*.jpg;*.png;*.bmp', 'Image Files (*.jpg, *.png, *.bmp)'}, 'Select Image Files', 'MultiSelect', 'on');
+if isequal(fileNames, 0)
+    disp('User canceled the operation');
+    return;
+end
+
+% Ensure fileNames is a cell array, even if only one file is selected
+if ~iscell(fileNames)
+    fileNames = {fileNames};
+end
+
+% Loop through selected images
+for i = 1:numel(fileNames)
+    % Read the selected image
+    try
+        inputImages{i} = imread(fullfile(filePath, fileNames{i}));
+    catch ex
+        disp(['Error: Unable to read ' fileNames{i}]);
+        disp(getReport(ex));
+        continue;
+    end
+
+    % Convert the input image to grayscale
+    try
+        grayscaleImages{i} = rgb2gray(inputImages{i});
+    catch ex
+        disp(['Error: Unable to convert ' fileNames{i} ' to grayscale.']);
+        disp(getReport(ex));
+        continue;
+    end
+
+    % Perform Fourier Transform for compression
+    compressedImages{i} = fft2(grayscaleImages{i});
+    
+    % Prompt for compression quality
+    prompt = ['Enter compression quality for ' fileNames{i} ' (0-100, default: 95): '];
+    dlgtitle = 'Compression Quality';
+    dims = [1 50];
+    definput = {'95'};
+    answer = inputdlg(prompt, dlgtitle, dims, definput);
+    
+    % Check if the user canceled input or provided an invalid value
+    if isempty(answer)
+        compressionQuality = 95; % Default quality
+    else
+        compressionQuality = str2double(answer{1});
+        if isnan(compressionQuality) || compressionQuality < 0 || compressionQuality > 100
+            disp('Invalid compression quality. Using default quality (95).');
+            compressionQuality = 95; % Default quality
+        end
+    end
+    compressionQualities(i) = compressionQuality;
+
+    % Allow the user to choose the output format
+    formats = {'png', 'jpg', 'bmp'}; % Supported formats
+    [outputFormatIndex, ~] = listdlg('PromptString', ['Select an output format for ' fileNames{i} ':'], 'ListString', formats);
+    if isempty(outputFormatIndex)
+        outputFormat = 'png'; % Default to PNG
+    else
+        outputFormat = formats{outputFormatIndex};
+    end
+    outputFormats{i} = outputFormat;
+    
+    % Generate unique output filename
+    [~, baseFileName, ~] = fileparts(fileNames{i});
+    outputFileNames{i} = [baseFileName '_compressed.' outputFormat];
+    
+    % Save the compressed image
+    if strcmpi(outputFormat, 'jpg')
+        % For JPEG images, include 'Quality' parameter
+        imwrite(uint8(abs(compressedImages{i})), outputFileNames{i}, 'jpg', 'Quality', compressionQuality);
+    else
+        % For other formats (e.g., PNG), remove 'Quality' parameter
+        imwrite(uint8(abs(compressedImages{i})), outputFileNames{i});
+    end
+    
+    % Calculate file sizes before and after compression using 'dir'
+    inputFileInfo = dir(fullfile(filePath, fileNames{i}));
+    compressedFileInfo = dir(outputFileNames{i});
+    
+    inputFileSize = inputFileInfo.bytes / 1024; % File size in KB
+    compressedFileSize = compressedFileInfo.bytes / 1024; % File size in KB
+
+    fprintf('File %d: %s\n', i, fileNames{i});
+    fprintf('Input File Size: %.2f KB\n', inputFileSize);
+    fprintf('Compressed File Size: %.2f KB\n', compressedFileSize);
+end
+
+% Display the images and compression details
+for i = 1:numel(fileNames)
+    figure('Name', ['Image Compression and Decompression - ' fileNames{i}]);
+    subplot(2, 2, 1);
+    imshow(inputImages{i});
+    title(['Input Image (' fileNames{i} ') =>']);
+    originalSizeText = uicontrol('Style', 'text', 'String', ['Original File Size: ' num2str(inputFileSize, '%.2f') ' KB'],...
+        'Position', [80 10 250 20]);
+    
+    subplot(2, 2, 2);
+    imshow(grayscaleImages{i});
+    title(['Grayscale Image (' fileNames{i} ')']);
+    
+    subplot(2, 2, 3);
+    imshow(abs(compressedImages{i}), []);
+    title(['Compressed Image MAGNITUDE (' fileNames{i} ')']);
+    
+    subplot(2, 2, 4);
+    compressedImageFile = imread(outputFileNames{i});
+    imshow(compressedImageFile);
+    title(['Compressed Image (' fileNames{i} ')']);
+    compressedFileSizeText = uicontrol('Style', 'text', 'String', ['Compressed File Size: ' num2str(compressedFileSize, '%.2f') ' KB'],...
+        'Position', [300 10 250 20]);
+end
+
+% Button to convert the compressed image back using IFFT
+convertButtons = [];
+for i = 1:numel(fileNames)
+    convertButtons{i} = uicontrol('Style', 'pushbutton', 'String', ['Convert Back (' fileNames{i} ')'],...
+        'Position', [10, 10 + (i - 1) * 40, 120, 30],...
+        'Callback', {@convertBack, compressedImages{i}});
+end
+
+% Compression Ratio Calculation
+compressionRatios = compressionQualities / 100; % Assuming quality is a percentage
+
+% Save Dialog
+[saveFileName, saveFilePath] = uiputfile({'*.mat', 'MAT File (*.mat)'}, 'Save Compression Details as MAT File');
+if isequal(saveFileName, 0)
+    disp('User canceled the save operation');
+else
+    save(fullfile(saveFilePath, saveFileName), 'fileNames', 'compressionRatios', 'outputFormats', 'outputFileNames');
+    disp(['Compression details saved as ' saveFileName]);
+end
+
+% Function to convert the compressed image back using IFFT
+function convertBack(~, ~, compressedImage)
+    if isempty(compressedImage)
+        disp('Compressed image not available.');
+        return;
+    end
+
+    % Perform inverse Fourier Transform (IFFT) to get the uncompressed image
+    uncompressedImage = ifft2(compressedImage);
+
+    % Display the uncompressed image
+    figure('Name', 'Uncompressed Image');
+    imshow(abs(uncompressedImage), []);
+    title('Uncompressed Image');
+end
